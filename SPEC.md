@@ -20,9 +20,10 @@
 
 **EXPLICITLY OUT of v1 (do not build, even if tempted):**
 - Interview-prep AI, salary intelligence, LinkedIn auto-posting, networking CRM.
-- Full bot-apply / scraping job boards to auto-submit (ToS risk — keep apply *assisted*, not automated).
-- Curated job feed (deferred to a later phase, scaffolded but not built now).
+- **Autonomous / headless bot-apply** — programmatically submitting to Naukri/LinkedIn/Bayt/Indeed. This breaks their ToS, shatters constantly on logins/CAPTCHAs/per-portal form quirks, and can get user accounts flagged. Never build this. Apply stays **assisted** (see Phase 5).
 - Team/multi-user, admin dashboards, mobile app.
+
+**PLANNED — Phase 5 (post-launch, after the v1 spine + paywall are live and working):** a job-search & match layer. "Search jobs" → pull a job feed → score each posting against the master CV → list the top ~10 with match % → per-job **Tailor** button + a **Tailor all** bulk action → per-job **Apply** that opens the live posting with the tailored .docx ready and auto-creates the tracker row (user does the final submit click — **assisted, not autonomous**). Reuses Prompt A (scoring) and Prompt B (tailoring) unchanged. This supersedes the old "curated job feed" deferral. Do not start it until v1 is done — it is a later phase precisely so it can't derail the spine.
 
 **The product's honest promise** (use this everywhere — it's the trust differentiator): *We guarantee your formatting never costs you a rejection. We don't promise you'll get hired — fit and seniority still decide that.* Never overclaim "ATS-proof" or "guaranteed interviews."
 
@@ -114,6 +115,22 @@ Enable Row Level Security on **every** table. Policy on all: `auth.uid() = user_
 | notes | text | nullable |
 | created_at / updated_at | timestamptz | |
 
+### `job_matches` (Phase 5 only — additive, do not build in v1)
+Same RLS as every other table (`auth.uid() = user_id`). Nothing above depends on this; it's a clean add-on.
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid (PK) | |
+| user_id | uuid (FK) | |
+| source | text | which feed the job came from |
+| job_url | text | live posting URL (opened on assisted apply) |
+| company, role | text | |
+| jd_text | text | pulled JD, fed to Prompt A |
+| match_score | int | 0–100 (Prompt A) |
+| analysis | jsonb | Prompt A output (matched/missing/suggestions) |
+| document_id | uuid (FK → tailored_documents) | nullable — set once the user tailors for this job |
+| status | text | `'matched'` \| `'tailored'` \| `'applied'` \| `'dismissed'`, default `'matched'` |
+| created_at / updated_at | timestamptz | |
+
 ---
 
 ## 3. The core flow (JD → tailored CV)
@@ -144,6 +161,7 @@ Enable Row Level Security on **every** table. Policy on all: `auth.uid() = user_
 | `/tracker` | auth | Applications table/kanban by status; follow-up reminders. |
 | `/settings` | auth | Edit master profile; plan/billing. |
 | `/pricing` | public | Free vs Pro; Razorpay checkout. |
+| `/jobs` | auth | **Phase 5 only.** "Search jobs" button → ranked top ~10 matches with match %; per-job Tailor + Apply; "Tailor all" bulk action. |
 
 ---
 
@@ -157,6 +175,8 @@ Enable Row Level Security on **every** table. Policy on all: `auth.uid() = user_
 | `/api/cover-letter` | POST | Auth: `{document_id}` → Prompt C → updates row. |
 | `/api/razorpay/create-subscription` | POST | Auth: create Razorpay subscription, return checkout params. |
 | `/api/razorpay/webhook` | POST | Verify signature → update `profiles.plan` / `subscription_status`. |
+| `/api/search-jobs` | POST | **Phase 5.** Auth: pull job feed (one source to start) → run Prompt A to score each posting against the master profile → upsert `job_matches` → return ranked top ~10. |
+| `/api/tailor-bulk` | POST | **Phase 5.** Auth: `{job_match_ids[]}` → loops the existing `/api/tailor` logic (Prompt B) over selected jobs, links each result back to its `job_matches` row. Respects the same quota/paywall. |
 
 All LLM calls: server-side only (never expose `ANTHROPIC_API_KEY` to client).
 
@@ -366,7 +386,10 @@ Cover letter (Prompt C). Application tracker (`/tracker`) + follow-up reminders 
 **Phase 4 — money (≈ week 4).**
 Razorpay subscription + webhook + paywall metering + `/pricing`.
 
-**Deferred (post-launch):** curated GCC job feed (Apify) as a retention hook; referral mechanic.
+**Phase 5 — job search & match (post-launch, only after Phases 1–4 are live and working).**
+Add the `job_matches` table. Wire one job-feed source (official/affiliate API preferred; Apify actor as fallback — grey-zone but low-stakes since apply is assisted). Build `/api/search-jobs` (feed → Prompt A scoring → ranked top ~10), `/api/tailor-bulk` (Prompt B over selected jobs), and the `/jobs` page with per-job Tailor + Apply and a "Tailor all" action. **Apply is assisted** — open the live posting with the tailored .docx ready and auto-create the tracker row; the user makes the final submit click. Never headless auto-submit.
+
+**Deferred beyond Phase 5:** referral mechanic; additional job-feed sources.
 
 ---
 
